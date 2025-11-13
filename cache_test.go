@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-// --- 1. 单元测试 (确保功能正确) ---
+// --- 1. Unit Tests (Functionality Verification) ---
 
-// TestCacheSetGet 测试基本的 Set 和 Get
+// TestCacheSetGet verifies basic Set and Get operations.
 func TestCacheSetGet(t *testing.T) {
 	c := New(0)
 	c.Set("key1", "value1", time.Minute)
@@ -29,34 +29,34 @@ func TestCacheSetGet(t *testing.T) {
 	}
 }
 
-// TestCacheExpiry 测试 TTL 和过期
+// TestCacheExpiry verifies TTL and expiration logic.
 func TestCacheExpiry(t *testing.T) {
-	c := New(10 * time.Millisecond) // 快速清理
+	c := New(10 * time.Millisecond) // Fast cleanup interval
 	c.Set("key1", "value1", 50*time.Millisecond)
-	c.Set("key2", "value2", 0) // 永不过期
+	c.Set("key2", "value2", 0) // No expiration (TTL=0)
 
-	// 立即获取
+	// Immediate access
 	val, found := c.Get("key1")
 	if !found || val.(string) != "value1" {
 		t.Fatal("Failed to get value immediately after set")
 	}
 
-	// 等待过期
+	// Wait for expiration
 	time.Sleep(100 * time.Millisecond)
 
-	// 此时 key1 应该已过期
+	// key1 should have expired
 	_, found = c.Get("key1")
 	if found {
 		t.Fatal("Got value for key that should have expired")
 	}
 
-	// key2 应该仍然存在
+	// key2 should still exist
 	_, found = c.Get("key2")
 	if !found {
 		t.Fatal("Got value for key that should not expire")
 	}
 
-	// 测试 Exists 方法
+	// Test Exists method
 	if c.Exists("key1") {
 		t.Fatal("Exists() returned true for expired key")
 	}
@@ -65,12 +65,12 @@ func TestCacheExpiry(t *testing.T) {
 	}
 }
 
-// TestCacheSetVariations 测试 SetNX, SetIfNotExists, Replace
+// TestCacheSetVariations verifies SetNX, SetIfNotExists, and Replace logic.
 func TestCacheSetVariations(t *testing.T) {
 	c := New(0)
 	c.Set("key1", "value1", time.Minute)
 
-	// SetIfNotExists
+	// Test SetIfNotExists on existing key
 	set := c.SetIfNotExists("key1", "new-value", time.Minute)
 	if set {
 		t.Fatal("SetIfNotExists should have failed for existing key")
@@ -79,22 +79,24 @@ func TestCacheSetVariations(t *testing.T) {
 	if val.(string) != "value1" {
 		t.Fatal("SetIfNotExists incorrectly overwrote value")
 	}
+	// Test SetIfNotExists on new key
 	set = c.SetIfNotExists("key2", "value2", time.Minute)
 	if !set {
 		t.Fatal("SetIfNotExists should have succeeded for new key")
 	}
 
-	// SetNX (等同于 SetIfNotExists)
+	// Test SetNX (alias for SetIfNotExists)
 	set = c.SetNX("key2", "new-value", time.Minute)
 	if set {
 		t.Fatal("SetNX should have failed for existing key")
 	}
 
-	// Replace
+	// Test Replace on non-existent key
 	set = c.Replace("key-not-exist", "value", time.Minute)
 	if set {
 		t.Fatal("Replace should have failed for non-existent key")
 	}
+	// Test Replace on existing key
 	set = c.Replace("key1", "value-replaced", time.Minute)
 	if !set {
 		t.Fatal("Replace should have succeeded for existing key")
@@ -105,7 +107,7 @@ func TestCacheSetVariations(t *testing.T) {
 	}
 }
 
-// TestCacheDeleteAndClear 测试 Del 和 Clear
+// TestCacheDeleteAndClear verifies Del and Clear operations.
 func TestCacheDeleteAndClear(t *testing.T) {
 	c := New(0)
 	c.Set("key1", "value1", time.Minute)
@@ -135,16 +137,16 @@ func TestCacheDeleteAndClear(t *testing.T) {
 	}
 }
 
-// TestCacheCleanup 测试后台清理
+// TestCacheCleanup verifies the background cleanup goroutine.
 func TestCacheCleanup(t *testing.T) {
 	c := New(20 * time.Millisecond)
-	c.Set("key1", "value", 10*time.Millisecond) // 立即过期
-	c.Set("key2", "value", 10*time.Millisecond) // 立即过期
+	c.Set("key1", "value", 10*time.Millisecond) // Should expire immediately
+	c.Set("key2", "value", 10*time.Millisecond) // Should expire immediately
 
-	// 等待 cleanup goroutine 运行
+	// Wait for cleanup goroutine to run
 	time.Sleep(50 * time.Millisecond)
 
-	// 此时 key 应该被后台删除了
+	// Keys should be deleted by the background routine
 	if c.Count() != 0 {
 		t.Fatalf("Cleanup did not remove expired items, count: %d", c.Count())
 	}
@@ -153,9 +155,36 @@ func TestCacheCleanup(t *testing.T) {
 	}
 }
 
-// --- 2. 持久化测试 (Save/Load) ---
+// TestCacheCompareAndDelete verifies CompareAndDelete operation.
+func TestCacheCompareAndDelete(t *testing.T) {
+	c := New(0)
+	c.Set("key1", "value1", time.Minute)
 
-// stringSerializer 是一个简单的序列化器，用于测试
+	// Fail: incorrect value
+	if c.CompareAndDelete("key1", "wrong_value") {
+		t.Fatal("CompareAndDelete succeeded with incorrect value")
+	}
+	if _, found := c.Get("key1"); !found {
+		t.Fatal("CompareAndDelete incorrectly deleted key")
+	}
+
+	// Success: correct value
+	if !c.CompareAndDelete("key1", "value1") {
+		t.Fatal("CompareAndDelete failed with correct value")
+	}
+	if _, found := c.Get("key1"); found {
+		t.Fatal("CompareAndDelete failed to delete key on success")
+	}
+
+	// Fail: key doesn't exist
+	if c.CompareAndDelete("key-nonexistent", "value") {
+		t.Fatal("CompareAndDelete succeeded on non-existent key")
+	}
+}
+
+// --- 2. Persistence Tests (Save/Load) ---
+
+// stringSerializer is a simple GOB serializer for test purposes.
 type stringSerializer struct{}
 
 func (s *stringSerializer) Serialize(value interface{}) ([]byte, error) {
@@ -168,7 +197,7 @@ func (s *stringSerializer) Serialize(value interface{}) ([]byte, error) {
 }
 
 func (s *stringSerializer) Deserialize(data []byte) (interface{}, error) {
-	var value string // 假设我们只存字符串
+	var value string // Assuming we only store strings for this test
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&value); err != nil {
@@ -177,6 +206,7 @@ func (s *stringSerializer) Deserialize(data []byte) (interface{}, error) {
 	return value, nil
 }
 
+// TestCacheSaveLoad verifies Save and Load operations, including skipping expired items during Load.
 func TestCacheSaveLoad(t *testing.T) {
 	c := New(0)
 	serializer := &stringSerializer{}
@@ -184,22 +214,22 @@ func TestCacheSaveLoad(t *testing.T) {
 	defer os.Remove(testFile)
 
 	c.Set("key1", "value1", time.Minute)
-	c.Set("key2", "value2", 0)                  // 永不过期
-	c.Set("key3", "value3", 1*time.Millisecond) // 加载时会过期
+	c.Set("key2", "value2", 0)                  // No expiration
+	c.Set("key3", "value3", 1*time.Millisecond) // Should be expired when saved/loaded
 
-	time.Sleep(2 * time.Millisecond) // 确保 key3 过期
+	time.Sleep(2 * time.Millisecond) // Ensure key3 expires
 
 	if err := c.Save(testFile, serializer); err != nil {
 		t.Fatalf("Failed to save cache: %v", err)
 	}
 
-	// 创建新缓存实例并加载
+	// Create new cache instance and load
 	c2 := New(0)
 	if err := c2.Load(testFile, serializer); err != nil {
 		t.Fatalf("Failed to load cache: %v", err)
 	}
 
-	// key1 和 key2 应该存在
+	// key1 and key2 should exist
 	val1, found1 := c2.Get("key1")
 	if !found1 || val1.(string) != "value1" {
 		t.Fatal("Failed to load key1")
@@ -209,7 +239,7 @@ func TestCacheSaveLoad(t *testing.T) {
 		t.Fatal("Failed to load key2")
 	}
 
-	// key3 应该因为过期而未被保存/加载
+	// key3 should have been skipped during Save/Load due to expiration
 	_, found3 := c2.Get("key3")
 	if found3 {
 		t.Fatal("Loaded expired key3")
@@ -220,14 +250,13 @@ func TestCacheSaveLoad(t *testing.T) {
 	}
 }
 
-// --- 3. 性能基准测试 ---
+// --- 3. Benchmark Tests (Performance Measurement) ---
 
 const (
-	benchmarkItemCount = 10000 // 预填充1万个key用于测试
+	benchmarkItemCount = 10000 // Number of keys to pre-populate for mixed tests
 )
 
-// fillCacheWithStrings 是一个辅助函数，用于为基准测试预填充缓存
-// 返回一个 key 列表供后续随机访问
+// fillCacheWithStrings is a helper function to pre-populate the cache for benchmarks.
 func fillCacheWithStrings(c *Cache, count int) []string {
 	keys := make([]string, count)
 	for i := 0; i < count; i++ {
@@ -238,8 +267,7 @@ func fillCacheWithStrings(c *Cache, count int) []string {
 	return keys
 }
 
-// BenchmarkCacheGetHit (你原有的测试) - 测试并发读 (热点 Key)
-// 这测试的是 RLock 的性能
+// BenchmarkCacheGetHit - Measures concurrent reads for a single hot key.
 func BenchmarkCacheGetHit(b *testing.B) {
 	c := New(0)
 	c.Set("key", "value", time.Hour)
@@ -253,96 +281,105 @@ func BenchmarkCacheGetHit(b *testing.B) {
 	})
 }
 
-// BenchmarkCacheGetMiss - 测试并发读 (Key 不存在)
+// BenchmarkCacheGetMiss - Measures concurrent reads for non-existent keys.
 func BenchmarkCacheGetMiss(b *testing.B) {
 	c := New(0)
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
-		// 每个 goroutine 读取不同的不存在的 key，以测试分片
-		// (这里我们用 rand，但在并发中用 atomic 更标准)
-		// (不过对于 'miss' 来说，key 内容不重要)
 		for pb.Next() {
+			// Reading a static missing key to test consistent miss latency
 			c.Get("key-miss")
 		}
 	})
 }
 
-// BenchmarkCacheSetNew - 测试并发写 (新 Key)
-// 这测试的是分片锁（写锁）的性能
+// BenchmarkCacheSetNew - Measures concurrent writes for unique new keys.
 func BenchmarkCacheSetNew(b *testing.B) {
 	c := New(0)
-	var counter uint64 // 使用原子计数器确保 key 唯一
+	var counter uint64 // Atomic counter for unique keys
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			// 每个 goroutine 写入不同的 key
+			// Write a different key for each operation
 			k := atomic.AddUint64(&counter, 1)
 			c.Set(strconv.FormatUint(k, 10), "value", time.Hour)
 		}
 	})
 }
 
-// BenchmarkCacheSetIfNotExistsNew - 测试并发写 (新 Key)
-// 这测试的是分片锁（写锁）的性能
+// BenchmarkCacheSetIfNotExistsNew - Measures concurrent SetIfNotExists for unique new keys.
 func BenchmarkCacheSetIfNotExistsNew(b *testing.B) {
 	c := New(0)
-	var counter uint64 // 使用原子计数器确保 key 唯一
+	var counter uint64 // Atomic counter for unique keys
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			// 每个 goroutine 写入不同的 key
+			// Write a different key for each operation
 			k := atomic.AddUint64(&counter, 1)
 			c.SetIfNotExists(strconv.FormatUint(k, 10), "value", time.Hour)
 		}
 	})
 }
 
-// BenchmarkCacheSetOverwrite - 测试并发写 (覆盖旧 Key)
-// 这测试的是分片锁（写锁）+ map 内部的开销
+// BenchmarkCacheSetOverwrite - Measures concurrent writes overwriting existing keys.
+// This highlights the efficiency of the sync.Pool item recycling (0 allocs/op).
 func BenchmarkCacheSetOverwrite(b *testing.B) {
 	c := New(0)
-	// 预填充数据，key 足够多 (100k) 以分散到所有分片
+	// Pre-populate enough keys (100k) to ensure good sharding
 	keys := fillCacheWithStrings(c, 100000)
 	keyCount := len(keys)
+
+	// Create a single random source for the whole benchmark run
+	r := rand.New(rand.NewSource(0))
+
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
-		// 每个 goroutine 随机覆盖一个 key
-		// 使用本地的 rand 减少全局锁争用
-		rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+		// Use a simple index based on the goroutine ID and iteration count for key selection
+		// This avoids contention on a single shared RNG source
+		p := r.Intn(keyCount) // Start index offset
+		i := 0
+
 		for pb.Next() {
-			k := keys[rng.Intn(keyCount)]
+			k := keys[(p + i) % keyCount]
 			c.Set(k, "new-value", time.Hour)
+			i++
 		}
 	})
 }
 
-// BenchmarkCacheGetSetMixed - 测试并发混合读写 (90% 读, 10% 写)
-// 这是最真实的场景
+// BenchmarkCacheGetSetMixed - Measures concurrent mixed read/write (90% read, 10% write).
+// This simulates the most realistic production load, leveraging sharding heavily.
 func BenchmarkCacheGetSetMixed(b *testing.B) {
 	c := New(0)
 	keys := fillCacheWithStrings(c, benchmarkItemCount)
 	keyCount := len(keys)
+
+	r := rand.New(rand.NewSource(0))
+
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		// Use a locally seeded RNG for fast, non-contended random decisions
+		// We use a different seed for each goroutine to ensure diversity
 		rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 		for pb.Next() {
 			k := keys[rng.Intn(keyCount)]
 
-			// 90% 读
+			// 90% Read
 			if rng.Intn(10) != 0 {
 				c.Get(k)
 			} else {
-				// 10% 写
+				// 10% Write
 				c.Set(k, "new-value-mixed", time.Hour)
 			}
 		}

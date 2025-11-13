@@ -10,28 +10,28 @@ import (
 	"time"
 )
 
-// Serializer 序列化接口，让使用者自己实现具体类型的序列化
+// Serializer defines the interface for custom value serialization.
 type Serializer interface {
-	// Serialize 将 value 序列化为字节数组
+	// Serialize converts the value to a byte array.
 	Serialize(value interface{}) ([]byte, error)
-	// Deserialize 从字节数组反序列化为具体类型
+	// Deserialize reconstructs the value from a byte array.
 	Deserialize(data []byte) (interface{}, error)
 }
 
-// item 内部使用，不导出
+// item is for internal use only.
 type item struct {
 	value  interface{}
-	expiry int64 // 改用 Unix 纳秒时间戳，避免 time.Time 的开销
+	expiry int64 // Uses Unix nanoseconds timestamp to avoid time.Time overhead.
 }
 
-// itemPool 对象池，用于复用 item 对象，减少 GC 压力
+// itemPool reuses item objects to reduce GC pressure.
 var itemPool = sync.Pool{
 	New: func() interface{} {
 		return &item{}
 	},
 }
 
-// acquireItem 从池中获取并初始化 item
+// acquireItem gets an item from the pool and initializes it.
 func acquireItem(value interface{}, expiry int64) *item {
 	i := itemPool.Get().(*item)
 	i.value = value
@@ -39,54 +39,40 @@ func acquireItem(value interface{}, expiry int64) *item {
 	return i
 }
 
-// releaseItem 将 item 归还到池中，并清理字段
+// releaseItem returns the item to the pool and cleans up fields.
 func releaseItem(i *item) {
-	// 清理字段，特别是 interface{} (value)，帮助 GC
+	// Clean up fields, especially the interface{} (value), to help GC.
 	i.value = nil
 	i.expiry = 0
 	itemPool.Put(i)
 }
 
-// 提供方法访问字段（如果需要的话）
-func (i *item) Value() interface{} {
-	return i.value
-}
-
-func (i *item) Expiry() time.Time {
-	if i.expiry == 0 {
-		return time.Time{}
-	}
-	return time.Unix(0, i.expiry)
-}
-
-func (i *item) IsExpired() bool {
-	return i.expiry > 0 && i.expiry < time.Now().UnixNano()
-}
-
-// shard 分片结构
+// shard structure, designed for concurrency.
 type shard struct {
 	mu    sync.RWMutex
 	items map[string]*item
-	_     [40]byte // 缓存行填充，避免伪共享
+	// Pad to align structure fields to avoid cache line contention (False Sharing).
+	// 40 bytes is often enough to push the next field onto a new cache line.
+	_ [40]byte
 }
 
-// Cache 分片缓存结构
+// Cache is a sharded, concurrent cache structure.
 type Cache struct {
 	shards       []*shard
-	shardMask    uint32 // 使用位掩码代替取模运算
+	shardMask    uint32 // Uses bitmask instead of modulo for speed
 	stop         chan struct{}
 	evictedTotal atomic.Uint64
 }
 
-// New 创建新的缓存实例（默认256分片）
+// New creates a new Cache instance with 256 default shards.
 func New(cleanupInterval time.Duration) *Cache {
 	return NewWithShardCount(cleanupInterval, 256)
 }
 
-// NewWithShardCount 创建指定分片数的缓存实例
-// shardCount 必须是2的幂次方，否则会自动调整到最接近的2的幂次方
+// NewWithShardCount creates a Cache instance with the specified number of shards.
+// shardCount must be a power of two; it will be adjusted if necessary.
 func NewWithShardCount(cleanupInterval time.Duration, shardCount uint32) *Cache {
-	// 确保分片数是2的幂次方，这样可以用位运算代替取模
+	// Ensure shard count is a power of two for faster bitwise modulo.
 	if shardCount == 0 {
 		shardCount = 256
 	}
@@ -94,11 +80,11 @@ func NewWithShardCount(cleanupInterval time.Duration, shardCount uint32) *Cache 
 
 	c := &Cache{
 		shards:    make([]*shard, shardCount),
-		shardMask: shardCount - 1, // 用于快速取模
+		shardMask: shardCount - 1, // Used for fast modulo operation
 		stop:      make(chan struct{}),
 	}
 
-	// 初始化所有分片
+	// Initialize all shards
 	for i := uint32(0); i < shardCount; i++ {
 		c.shards[i] = &shard{
 			items: make(map[string]*item),
@@ -112,7 +98,7 @@ func NewWithShardCount(cleanupInterval time.Duration, shardCount uint32) *Cache 
 	return c
 }
 
-// nextPowerOfTwo 返回大于等于 n 的最小的2的幂次方
+// nextPowerOfTwo returns the smallest power of two greater than or equal to n.
 func nextPowerOfTwo(n uint32) uint32 {
 	if n == 0 {
 		return 1
@@ -126,13 +112,13 @@ func nextPowerOfTwo(n uint32) uint32 {
 	return n + 1
 }
 
-// getShard 根据key获取对应的分片（使用位运算优化）
+// getShard returns the correct shard for a given key.
 func (c *Cache) getShard(key string) *shard {
 	hash := fnv32a(key)
-	return c.shards[hash&c.shardMask] // 位运算代替取模，更快
+	return c.shards[hash&c.shardMask] // Bitwise modulo is faster
 }
 
-// Count 返回缓存中的项数
+// Count returns the number of items in the cache.
 func (c *Cache) Count() int {
 	count := 0
 	for _, s := range c.shards {
@@ -143,7 +129,7 @@ func (c *Cache) Count() int {
 	return count
 }
 
-// Set 无条件设置缓存项（会覆盖已存在的key）
+// Set unconditionally sets a cache entry (overwrites existing key).
 func (c *Cache) Set(key string, value interface{}, ttl time.Duration) {
 	var expiry int64
 	if ttl > 0 {
@@ -153,17 +139,17 @@ func (c *Cache) Set(key string, value interface{}, ttl time.Duration) {
 	s := c.getShard(key)
 	s.mu.Lock()
 
-	// 如果 key 已存在，先释放旧的 item
+	// If the key already exists, release the old item first.
 	if oldItem, exists := s.items[key]; exists {
 		releaseItem(oldItem)
 	}
 
-	// 从池中获取新的 item
+	// Acquire new item from the pool
 	s.items[key] = acquireItem(value, expiry)
 	s.mu.Unlock()
 }
 
-// Exists 检查key是否存在且未过期
+// Exists checks if a key exists and is not expired.
 func (c *Cache) Exists(key string) bool {
 	s := c.getShard(key)
 	s.mu.RLock()
@@ -179,50 +165,46 @@ func (c *Cache) Exists(key string) bool {
 	return true
 }
 
-// SetIfNotExists 仅在key不存在时设置（更安全的选择）
+// SetIfNotExists sets the key only if it does not already exist and is not expired.
 func (c *Cache) SetIfNotExists(key string, value interface{}, ttl time.Duration) bool {
 	s := c.getShard(key)
-	nowNano := time.Now().UnixNano() // <--- [修正 1] 只调用一次时间
+	nowNano := time.Now().UnixNano()
 
-	// --- 1. 快速路径：只读锁检查 ---
+	// --- 1. Fast path: RLock check ---
 	s.mu.RLock()
 	obj, exists := s.items[key]
 	if exists {
-		// [修正 2] 使用外部时间戳检查
 		if obj.expiry == 0 || obj.expiry > nowNano {
 			s.mu.RUnlock()
-			return false // 存在且未过期，快速返回
+			return false // Exists and not expired, fast return
 		}
 	}
 	s.mu.RUnlock()
 
-	// --- 2. 慢路径：需要写入（不存在或已过期）---
-
-	// 重新计算 expiry (使用相同的 nowNano)
+	// --- 2. Slow path: Requires write (does not exist or is expired) ---
 	var expiry int64
 	if ttl > 0 {
-		expiry = nowNano + ttl.Nanoseconds() // <--- 确保使用 nowNano，而不是再次调用 Now()
+		expiry = nowNano + ttl.Nanoseconds()
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// --- 3. 双重检查：可能其他协程已经设置了 ---
+	// --- 3. Double Check: Another goroutine might have set it ---
 	if objItem, ok := s.items[key]; ok {
-		// [修正 3] 再次使用 nowNano 进行检查
 		if objItem.expiry == 0 || objItem.expiry > nowNano {
-			return false // 已存在且未过期，退出
+			return false // Exists and not expired, exit
 		}
-		// 过期了，释放旧的 item
+		// It was expired, release the old item
 		releaseItem(objItem)
 	}
 
-	// --- 4. 写入 ---
+	// --- 4. Write ---
 	s.items[key] = acquireItem(value, expiry)
 	return true
 }
 
-// Replace 仅在key存在时替换值
+// Replace replaces the value only if the key exists and is not expired.
 func (c *Cache) Replace(key string, value interface{}, ttl time.Duration) bool {
 	s := c.getShard(key)
 	now := time.Now().UnixNano()
@@ -230,13 +212,13 @@ func (c *Cache) Replace(key string, value interface{}, ttl time.Duration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 检查是否存在且未过期
+	// Check if key exists and is not expired
 	if itemObject, ok := s.items[key]; ok {
 		if itemObject.expiry == 0 || itemObject.expiry > now {
-			// 存在且未过期，释放旧的 item
+			// Exists and not expired, release the old item
 			releaseItem(itemObject)
 
-			// 进行替换
+			// Perform replacement
 			var expiry int64
 			if ttl > 0 {
 				expiry = time.Now().Add(ttl).UnixNano()
@@ -247,10 +229,10 @@ func (c *Cache) Replace(key string, value interface{}, ttl time.Duration) bool {
 		}
 	}
 
-	return false // key不存在或已过期
+	return false // Key does not exist or is expired
 }
 
-// CompareAndDelete 比较并删除
+// CompareAndDelete deletes the cache entry only if its current value matches the expected value.
 func (c *Cache) CompareAndDelete(key string, expectedValue interface{}) bool {
 	s := c.getShard(key)
 	now := time.Now().UnixNano()
@@ -260,47 +242,27 @@ func (c *Cache) CompareAndDelete(key string, expectedValue interface{}) bool {
 
 	obj, ok := s.items[key]
 	if !ok {
-		return false // key不存在
+		return false // Key does not exist
 	}
 
-	// 检查过期
+	// Check expiry
 	if obj.expiry > 0 && obj.expiry < now {
 		delete(s.items, key)
 		releaseItem(obj)
-		return false // 已过期
+		return false // Expired
 	}
 
-	// 比较值
+	// Compare values
 	if obj.value == expectedValue {
 		delete(s.items, key)
 		releaseItem(obj)
-		return true // 成功删除
+		return true // Successfully deleted
 	}
 
-	return false // 值不匹配
+	return false // Values do not match
 }
 
-// Get 获取缓存项（无统计）
-/*
-func (c *Cache) Get(key string) (interface{}, bool) {
-	s := c.getShard(key)
-	s.mu.RLock()
-	obj, ok := s.items[key]
-	s.mu.RUnlock()
-
-	if !ok {
-		return nil, false
-	}
-
-	// 检查过期（在锁外检查，减少锁持有时间）
-	if obj.expiry > 0 && obj.expiry < time.Now().UnixNano() {
-		return nil, false
-	}
-
-	return obj.value, true
-}
-*/
-
+// Get retrieves a cache entry. This is the **concurrently safe** version.
 func (c *Cache) Get(key string) (interface{}, bool) {
 	s := c.getShard(key)
 	s.mu.RLock()
@@ -311,23 +273,24 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 		return nil, false
 	}
 
-	// 1. 在锁内检查过期
+	// 1. Check expiry inside the lock to ensure atomicity of the item check.
 	if obj.expiry > 0 && obj.expiry < time.Now().UnixNano() {
 		s.mu.RUnlock()
 		return nil, false
 	}
 
-	// 2. 在锁内读取 value，防止被 Set/releaseItem 污染
+	// 2. Read the value inside the lock, preventing the value from being corrupted
+	//    by a concurrent Set/releaseItem operation (which was the original data race).
 	value := obj.value
-	s.mu.RUnlock() // 拿到 value 之后再解锁
+	s.mu.RUnlock() // Unlock after reading the value
 
 	return value, true
 }
 
-// GetOrSet 原子性的 Get-or-Set 操作，适合 DNS 等需要计算默认值的场景
-// 返回值：(value, wasPresent)
+// GetOrSet is an atomic Get-or-Set operation, suitable for scenarios that require
+// computation of default values (like DNS). Returns (value, wasPresent).
 func (c *Cache) GetOrSet(key string, computeValue func() (interface{}, time.Duration)) (interface{}, bool) {
-	// 先尝试读取
+	// First attempt to read (fast path)
 	s := c.getShard(key)
 	now := time.Now().UnixNano()
 
@@ -336,27 +299,27 @@ func (c *Cache) GetOrSet(key string, computeValue func() (interface{}, time.Dura
 	if ok && (obj.expiry == 0 || obj.expiry > now) {
 		value := obj.value
 		s.mu.RUnlock()
-		return value, true // 缓存命中
+		return value, true // Cache hit
 	}
 	s.mu.RUnlock()
 
-	// 缓存未命中，升级为写锁
+	// Cache miss, upgrade to write lock (slow path)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 双重检查（可能其他 goroutine 已经写入）
+	// Double check (another goroutine might have written)
 	obj, ok = s.items[key]
 	now = time.Now().UnixNano()
 	if ok && (obj.expiry == 0 || obj.expiry > now) {
 		return obj.value, true
 	}
 
-	// 如果存在过期的项，释放它
+	// If an expired item exists, release it
 	if ok {
 		releaseItem(obj)
 	}
 
-	// 计算新值
+	// Compute new value
 	value, ttl := computeValue()
 
 	var expiry int64
@@ -365,15 +328,15 @@ func (c *Cache) GetOrSet(key string, computeValue func() (interface{}, time.Dura
 	}
 
 	s.items[key] = acquireItem(value, expiry)
-	return value, false // 新计算的值
+	return value, false // Newly computed value
 }
 
-// SetNX Set if Not eXists
+// SetNX is an alias for SetIfNotExists.
 func (c *Cache) SetNX(key string, value interface{}, ttl time.Duration) bool {
 	return c.SetIfNotExists(key, value, ttl)
 }
 
-// Del 删除缓存项
+// Del deletes a cache entry.
 func (c *Cache) Del(key string) {
 	s := c.getShard(key)
 	s.mu.Lock()
@@ -384,11 +347,11 @@ func (c *Cache) Del(key string) {
 	s.mu.Unlock()
 }
 
-// Clear 清空缓存中的所有项
+// Clear removes all items from the cache.
 func (c *Cache) Clear() {
 	for _, s := range c.shards {
 		s.mu.Lock()
-		// 释放所有 item
+		// Release all items
 		for _, item := range s.items {
 			releaseItem(item)
 		}
@@ -397,12 +360,12 @@ func (c *Cache) Clear() {
 	}
 }
 
-// SetBatch 批量设置，减少锁竞争，适合预热场景
+// SetBatch sets multiple entries efficiently, reducing lock contention for bulk operations.
 func (c *Cache) SetBatch(entries map[string]struct {
 	Value interface{}
 	TTL   time.Duration
 }) {
-	// 按分片分组
+	// Group by shard
 	shardGroups := make([]map[string]*item, len(c.shards))
 	for i := range shardGroups {
 		shardGroups[i] = make(map[string]*item)
@@ -420,7 +383,7 @@ func (c *Cache) SetBatch(entries map[string]struct {
 		shardGroups[shardIdx][key] = acquireItem(entry.Value, expiry)
 	}
 
-	// 批量写入各分片
+	// Batch write to each shard in parallel
 	var wg sync.WaitGroup
 	for i, s := range c.shards {
 		if len(shardGroups[i]) == 0 {
@@ -431,7 +394,7 @@ func (c *Cache) SetBatch(entries map[string]struct {
 		go func(shard *shard, items map[string]*item) {
 			defer wg.Done()
 			shard.mu.Lock()
-			// 释放被覆盖的旧 item
+			// Release old items that are being overwritten
 			for k, newItem := range items {
 				if oldItem, exists := shard.items[k]; exists {
 					releaseItem(oldItem)
@@ -444,7 +407,7 @@ func (c *Cache) SetBatch(entries map[string]struct {
 	wg.Wait()
 }
 
-// cleanup 定期清理过期项
+// cleanup periodically deletes expired items.
 func (c *Cache) cleanup(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -459,16 +422,16 @@ func (c *Cache) cleanup(interval time.Duration) {
 	}
 }
 
-// EvictedTotal 返回已驱逐的项总数
+// EvictedTotal returns the total number of items evicted by the cleanup process.
 func (c *Cache) EvictedTotal() uint64 {
 	return c.evictedTotal.Load()
 }
 
-// deleteExpired 删除所有过期项（优化版本：使用工作池避免创建过多goroutine）
+// deleteExpired deletes all expired items using a worker pool.
 func (c *Cache) deleteExpired() {
 	now := time.Now().UnixNano()
 
-	// 使用有限数量的 worker 来处理所有分片
+	// Use a limited number of workers to process all shards
 	workerCount := 8
 	if len(c.shards) < workerCount {
 		workerCount = len(c.shards)
@@ -478,7 +441,7 @@ func (c *Cache) deleteExpired() {
 	var wg sync.WaitGroup
 	var totalEvicted atomic.Uint64
 
-	// 启动 worker
+	// Start workers
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
@@ -492,7 +455,7 @@ func (c *Cache) deleteExpired() {
 				for key, item := range s.items {
 					if item.expiry > 0 && item.expiry < now {
 						delete(s.items, key)
-						releaseItem(item) // 释放过期的 item
+						releaseItem(item) // Release the expired item
 						localEvicted++
 					}
 				}
@@ -505,7 +468,7 @@ func (c *Cache) deleteExpired() {
 		}()
 	}
 
-	// 分配任务
+	// Distribute tasks
 	for i := uint32(0); i < uint32(len(c.shards)); i++ {
 		shardChan <- i
 	}
@@ -519,12 +482,12 @@ func (c *Cache) deleteExpired() {
 	}
 }
 
-// Stop 停止后台清理
+// Stop stops the background cleanup routine.
 func (c *Cache) Stop() {
 	close(c.stop)
 }
 
-// Save 使用自定义序列化器保存缓存到文件
+// Save saves the cache to a file using a custom serializer.
 func (c *Cache) Save(filename string, serializer Serializer) error {
 	file, err := os.Create(filename)
 	if err != nil {
@@ -534,7 +497,7 @@ func (c *Cache) Save(filename string, serializer Serializer) error {
 
 	now := time.Now().UnixNano()
 
-	// 写入魔数和版本号（小端序）
+	// Write magic number and version (little-endian)
 	if err := binary.Write(file, binary.LittleEndian, uint32(0x43414348)); err != nil { // "CACH"
 		return err
 	}
@@ -542,12 +505,12 @@ func (c *Cache) Save(filename string, serializer Serializer) error {
 		return err
 	}
 
-	// 写入 evictedTotal
+	// Write evictedTotal
 	if err := binary.Write(file, binary.LittleEndian, c.evictedTotal.Load()); err != nil {
 		return err
 	}
 
-	// 计算所有分片中的有效项数量
+	// Count the number of valid items across all shards
 	validCount := 0
 	for _, s := range c.shards {
 		s.mu.RLock()
@@ -559,28 +522,28 @@ func (c *Cache) Save(filename string, serializer Serializer) error {
 		s.mu.RUnlock()
 	}
 
-	// 写入有效项数量
+	// Write the count of valid items
 	if err := binary.Write(file, binary.LittleEndian, uint32(validCount)); err != nil {
 		return err
 	}
 
-	// 写入每个缓存项
+	// Write each cache item
 	for _, s := range c.shards {
 		s.mu.RLock()
 		for key, item := range s.items {
-			// 跳过已过期的项
+			// Skip expired items
 			if item.expiry > 0 && item.expiry < now {
 				continue
 			}
 
-			// 序列化值
+			// Serialize the value
 			valueBytes, err := serializer.Serialize(item.value)
 			if err != nil {
-				// 跳过无法序列化的项
+				// Skip non-serializable items
 				continue
 			}
 
-			// 写入 key 长度和内容
+			// Write key length and content
 			if err := binary.Write(file, binary.LittleEndian, uint32(len(key))); err != nil {
 				s.mu.RUnlock()
 				return err
@@ -590,7 +553,7 @@ func (c *Cache) Save(filename string, serializer Serializer) error {
 				return err
 			}
 
-			// 写入 value 长度和内容
+			// Write value length and content
 			if err := binary.Write(file, binary.LittleEndian, uint32(len(valueBytes))); err != nil {
 				s.mu.RUnlock()
 				return err
@@ -600,7 +563,7 @@ func (c *Cache) Save(filename string, serializer Serializer) error {
 				return err
 			}
 
-			// 写入过期时间
+			// Write expiry time
 			if err := binary.Write(file, binary.LittleEndian, item.expiry); err != nil {
 				s.mu.RUnlock()
 				return err
@@ -612,7 +575,7 @@ func (c *Cache) Save(filename string, serializer Serializer) error {
 	return nil
 }
 
-// Load 使用自定义序列化器从文件加载缓存
+// Load loads the cache from a file using a custom serializer.
 func (c *Cache) Load(filename string, serializer Serializer) error {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -620,7 +583,7 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 	}
 	defer file.Close()
 
-	// 读取并验证魔数
+	// Read and validate magic number
 	var magic uint32
 	if err := binary.Read(file, binary.LittleEndian, &magic); err != nil {
 		return err
@@ -629,7 +592,7 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 		return errors.New("invalid cache file format")
 	}
 
-	// 读取版本号
+	// Read version
 	var version uint32
 	if err := binary.Read(file, binary.LittleEndian, &version); err != nil {
 		return err
@@ -638,25 +601,25 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 		return errors.New("unsupported cache file version")
 	}
 
-	// 读取 evictedTotal
+	// Read evictedTotal
 	var evictedTotal uint64
 	if err := binary.Read(file, binary.LittleEndian, &evictedTotal); err != nil {
 		return err
 	}
 
-	// 读取项数量
+	// Read item count
 	var count uint32
 	if err := binary.Read(file, binary.LittleEndian, &count); err != nil {
 		return err
 	}
 
-	// 临时存储所有读取的项
+	// Temporary storage for all read items
 	tempItems := make(map[string]*item, count)
 	now := time.Now().UnixNano()
 
-	// 读取每个缓存项
+	// Read each cache item
 	for i := uint32(0); i < count; i++ {
-		// 读取 key
+		// Read key
 		var keyLen uint32
 		if err := binary.Read(file, binary.LittleEndian, &keyLen); err != nil {
 			if err == io.EOF {
@@ -670,7 +633,7 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 		}
 		key := string(keyBytes)
 
-		// 读取 value
+		// Read value
 		var valueLen uint32
 		if err := binary.Read(file, binary.LittleEndian, &valueLen); err != nil {
 			return err
@@ -680,11 +643,10 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 			return err
 		}
 
-		// 反序列化值
+		// Deserialize value
 		value, err := serializer.Deserialize(valueBytes)
 		if err != nil {
-			// 跳过无法反序列化的项
-			// 但仍需读取过期时间以保持文件指针位置正确
+			// Skip unserializable items, but still read expiry to maintain file pointer position
 			var expiryNano int64
 			if err := binary.Read(file, binary.LittleEndian, &expiryNano); err != nil {
 				return err
@@ -692,23 +654,23 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 			continue
 		}
 
-		// 读取过期时间
+		// Read expiry time
 		var expiryNano int64
 		if err := binary.Read(file, binary.LittleEndian, &expiryNano); err != nil {
 			return err
 		}
 
-		// 跳过已过期的项
+		// Skip expired items
 		if expiryNano > 0 && expiryNano < now {
 			continue
 		}
 
-		// 使用池中的 item
+		// Acquire item from pool
 		tempItems[key] = acquireItem(value, expiryNano)
 	}
 
-	// 将数据分配到各个分片中
-	// 先清空所有分片（释放旧的 item）
+	// Distribute data to shards
+	// Clear all shards first (release old items)
 	for _, s := range c.shards {
 		s.mu.Lock()
 		for _, item := range s.items {
@@ -718,20 +680,20 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 		s.mu.Unlock()
 	}
 
-	// 批量分配到对应分片，减少锁操作
+	// Bulk allocate to corresponding shards, reducing lock operations
 	shardData := make([]map[string]*item, len(c.shards))
 	for i := range shardData {
 		shardData[i] = make(map[string]*item)
 	}
 
-	// 先分组
+	// Group first
 	for key, item := range tempItems {
 		hash := fnv32a(key)
 		shardIdx := hash & c.shardMask
 		shardData[shardIdx][key] = item
 	}
 
-	// 再批量写入各分片
+	// Then bulk write to each shard
 	for i, s := range c.shards {
 		if len(shardData[i]) > 0 {
 			s.mu.Lock()
@@ -745,7 +707,7 @@ func (c *Cache) Load(filename string, serializer Serializer) error {
 	return nil
 }
 
-// fnv32a FNV-1a 哈希算法实现
+// fnv32a FNV-1a Hash implementation
 func fnv32a(s string) uint32 {
 	const (
 		offset32 = 2166136261
