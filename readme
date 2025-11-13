@@ -49,7 +49,6 @@ ok      [github.com/jamesleeon/shardcache](https://github.com/jamesleeon/shardca
 ```bash
 go get [github.com/jamesleeon/shardcache](https://github.com/jamesleeon/shardcache)
 ```
-*(请将 `jamesleeon` 替换为你的 GitHub 用户名)*
 
 ## 💡 使用 (Usage)
 
