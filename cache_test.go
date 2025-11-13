@@ -335,8 +335,6 @@ func BenchmarkCacheSetOverwrite(b *testing.B) {
 	keys := fillCacheWithStrings(c, 100000)
 	keyCount := len(keys)
 
-	// Create a single random source for the whole benchmark run
-	r := rand.New(rand.NewSource(0))
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -344,13 +342,10 @@ func BenchmarkCacheSetOverwrite(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		// Use a simple index based on the goroutine ID and iteration count for key selection
 		// This avoids contention on a single shared RNG source
-		p := r.Intn(keyCount) // Start index offset
-		i := 0
-
+		rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 		for pb.Next() {
-			k := keys[(p + i) % keyCount]
+			k := keys[rng.Intn(keyCount)]
 			c.Set(k, "new-value", time.Hour)
-			i++
 		}
 	})
 }
@@ -362,7 +357,6 @@ func BenchmarkCacheGetSetMixed(b *testing.B) {
 	keys := fillCacheWithStrings(c, benchmarkItemCount)
 	keyCount := len(keys)
 
-	r := rand.New(rand.NewSource(0))
 
 	b.ReportAllocs()
 	b.ResetTimer()
