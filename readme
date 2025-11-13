@@ -1,7 +1,7 @@
 # shardcache
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/your-username/shardcache)](https://goreportcard.com/report/github.com/your-username/shardcache)
-[![Go Reference](https://pkg.go.dev/badge/github.com/your-username/shardcache.svg)](https://pkg.go.dev/github.com/your-username/shardcache)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jamesleeon/shardcache)](https://goreportcard.com/report/github.com/jamesleeon/shardcache)
+[![Go Reference](https://pkg.go.dev/badge/github.com/jamesleeon/shardcache.svg)](https://pkg.go.dev/github.com/jamesleeon/shardcache)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **shardcache** 是一个高性能、并发安全的 Go 内存缓存库。
@@ -25,7 +25,7 @@
 ```
 goos: windows
 goarch: amd64
-pkg: [github.com/your-username/shardcache](https://github.com/your-username/shardcache)
+pkg: [github.com/jamesleeon/shardcache](https://github.com/jamesleeon/shardcache)
 cpu: Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz
 BenchmarkCacheGetHit-8            28561975         42.44 ns/op        0 B/op        0 allocs/op
 BenchmarkCacheGetMiss-8           24703862         48.81 ns/op        0 B/op        0 allocs/op
@@ -34,7 +34,7 @@ BenchmarkCacheSetIfNotExistsNew-8    5594151         204.9 ns/op      111 B/op  
 BenchmarkCacheSetOverwrite-8      25967112         46.98 ns/op        0 B/op        0 allocs/op
 BenchmarkCacheGetSetMixed-8       43533150         28.18 ns/op        0 B/op        0 allocs/op
 PASS
-ok      [github.com/your-username/shardcache](https://github.com/your-username/shardcache)    8.876s
+ok      [github.com/jamesleeon/shardcache](https://github.com/jamesleeon/shardcache)    8.876s
 ```
 
 ### 跑分数据解读:
@@ -47,9 +47,9 @@ ok      [github.com/your-username/shardcache](https://github.com/your-username/s
 ## 📦 安装 (Installation)
 
 ```bash
-go get [github.com/your-username/shardcache](https://github.com/your-username/shardcache)
+go get [github.com/jamesleeon/shardcache](https://github.com/jamesleeon/shardcache)
 ```
-*(请将 `your-username` 替换为你的 GitHub 用户名)*
+*(请将 `jamesleeon` 替换为你的 GitHub 用户名)*
 
 ## 💡 使用 (Usage)
 
@@ -61,7 +61,7 @@ import (
 	"time"
 
     // 假设你的模块名是这个
-	"[github.com/your-username/shardcache](https://github.com/your-username/shardcache)"
+	"[github.com/jamesleeon/shardcache](https://github.com/jamesleeon/shardcache)"
 )
 
 func main() {
