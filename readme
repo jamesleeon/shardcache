@@ -25,16 +25,14 @@ ShardCache is a Go in-memory cache library designed specifically for high-concur
 
 ## 📊 Performance Benchmarks
 
-**Test Environment**
+### Test Environment
 
-```
-CPU:  Intel Core i7-8650U @ 1.90GHz (8 cores)
-OS:   Windows
-Arch: amd64
-Go:   1.20+
-```
+- **CPU:** Intel Core i7-8650U @ 1.90GHz (8 cores)
+- **OS:** Windows
+- **Arch:** amd64
+- **Go:** 1.20+
 
-**Benchmark Results**
+### Benchmark Results
 
 ```
 BenchmarkCacheGetHit-8                28561975    42.44 ns/op    0 B/op    0 allocs/op
@@ -45,10 +43,10 @@ BenchmarkCacheSetOverwrite-8          25967112    46.98 ns/op    0 B/op    0 all
 BenchmarkCacheGetSetMixed-8           43533150    28.18 ns/op    0 B/op    0 allocs/op
 ```
 
-**Performance Highlights**
+### Performance Highlights
 
 | Scenario | Metric | Description |
-|---------|---------|------|
+|----------|--------|-------------|
 | Mixed Read/Write (90/10) | 28.18 ns/op | Perfect shard load balancing |
 | Cache Hit | 42.44 ns/op | Zero memory allocations |
 | Key Overwrite | 0 allocs/op | sync.Pool object reuse in action |
@@ -129,6 +127,7 @@ fmt.Printf("GetOrSet: %s (wasPresent: %v)\n", val, wasPresent)
 ### Sharding Technology
 
 By distributing cache data across multiple shards, each with independent locking:
+
 - Reduces lock contention probability
 - Improves concurrent access performance
 - Achieves near-linear performance scaling
@@ -136,6 +135,7 @@ By distributing cache data across multiple shards, each with independent locking
 ### Object Reuse (sync.Pool)
 
 Utilizes Go's standard library sync.Pool to reuse cache item objects:
+
 - Reduces memory allocation frequency
 - Lowers GC pressure
 - Achieves 0 allocs/op for overwrite operations
